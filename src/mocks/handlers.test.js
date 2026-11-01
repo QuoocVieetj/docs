@@ -83,3 +83,77 @@ it('responds neutrally to known and unknown recovery emails', async () => {
   expect(known.status).toBe(202)
   expect(unknown.data).toEqual(known.data)
 })
+
+// Dán vào cuối file front-end/src/mocks/handlers.test.js
+
+it('cho phép ADMIN quản lý danh mục và chặn MANAGER / EMPLOYEE với 403 Forbidden', async () => {
+  // 1. MANAGER bị chặn 403
+  await login('manager@demo.test')
+  await expect(api.get('/categories')).rejects.toMatchObject({
+    response: { status: 403 },
+  })
+
+  // 2. EMPLOYEE bị chặn 403
+  await login('employee@demo.test')
+  await expect(api.get('/categories')).rejects.toMatchObject({
+    response: { status: 403 },
+  })
+
+  // 3. ADMIN truy cập thành công
+  await login('admin@demo.test')
+  const res = await api.get('/categories')
+  expect(res.status).toBe(200)
+  expect(res.data.length).toBe(12) // 12 bản ghi hạt giống khớp Flyway V1
+})
+
+it('xử lý thêm mới, trùng mã (409 Conflict), cập nhật và ngưng dùng danh mục', async () => {
+  await login('admin@demo.test')
+
+  // 1. Thêm mới thành công (tự động chuẩn hóa viết hoa mã code)
+  const created = await api.post('/categories', {
+    type: 'DOC_TYPE',
+    code: 'tt',
+    name: 'Thông tư',
+    symbol: 'TT',
+  })
+  expect(created.status).toBe(201)
+  expect(created.data.code).toBe('TT')
+  expect(created.data.isActive).toBe(true)
+
+  // 2. Trùng mã code trong cùng type -> Bắt lỗi 409 Conflict
+  await expect(
+    api.post('/categories', {
+      type: 'DOC_TYPE',
+      code: 'TT',
+      name: 'Thông tư trùng mã',
+    }),
+  ).rejects.toMatchObject({
+    response: {
+      status: 409,
+      data: {
+        code: 'CONFLICT',
+        fieldErrors: { code: expect.any(String) },
+      },
+    },
+  })
+
+  // 3. Cập nhật thông tin danh mục
+  const updated = await api.put(`/categories/${created.data.id}`, {
+    type: 'DOC_TYPE',
+    code: 'TT',
+    name: 'Thông tư liên tịch',
+    symbol: 'TTLT',
+  })
+  expect(updated.data.name).toBe('Thông tư liên tịch')
+  expect(updated.data.symbol).toBe('TTLT')
+
+  // 4. Ngưng dùng danh mục (deactivate)
+  const deactivated = await api.patch(`/categories/${created.data.id}/deactivate`)
+  expect(deactivated.data.isActive).toBe(false)
+
+  // 5. Kiểm tra /categories/active không còn chứa mục vừa ngưng dùng
+  const activeRes = await api.get('/categories/active', {
+    params: { type: 'DOC_TYPE' },
+  })
+  expect(activeRes.data.some((c) => c.id === created.data.id)).toBe(false)
+})

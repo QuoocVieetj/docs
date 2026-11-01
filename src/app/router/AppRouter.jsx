@@ -1,6 +1,7 @@
 import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router'
 import { useAuth } from '../../features/auth/context/useAuth.js'
 import AccountPage from '../../features/auth/pages/AccountPage.jsx'
+import CategoriesPage from '../../features/categories/pages/CategoriesPage.jsx'
 import AppLayout from '../../layouts/AppLayout/AppLayout.jsx'
 import Workspace from '../../pages/Workspace.jsx'
 import ForbiddenPage from '../../pages/ForbiddenPage.jsx'
@@ -56,6 +57,8 @@ export default function AppRouter() {
               element={
                 route.path === '/change-password' ? (
                   <AccountPage key="change" mode="change" />
+                ) : route.path === '/admin/categories' ? (
+                  <CategoriesPage />
                 ) : (
                   <Workspace title={route.label} />
                 )

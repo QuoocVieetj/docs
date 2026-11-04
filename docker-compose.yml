@@ -1,0 +1,100 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: docs-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: category_db
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    # Chỉ mở cho máy local, không chiếm cổng 5432 trên IP Tailscale của postgres-shared
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Tạo thêm auth_db, chỉ chạy lần đầu khi volume còn trống
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d category_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    # Image minio/minio không còn phát hành trên Docker Hub, dùng bản build của Chainguard
+    image: cgr.dev/chainguard/minio:latest
+    container_name: docs-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Trang quản trị
+    volumes:
+      - minio_data:/data
+
+  # Chạy một lần để tạo bucket chứa tệp đính kèm rồi thoát
+  minio-init:
+    image: cgr.dev/chainguard/minio-client:latest
+    container_name: docs-minio-init
+    restart: on-failure
+    depends_on:
+      - minio
+    environment:
+      MC_HOST_local: http://${MINIO_ROOT_USER:-minioadmin}:${MINIO_ROOT_PASSWORD:-minioadmin}@minio:9000
+    command: ["mb", "--ignore-existing", "local/${MINIO_BUCKET:-attachments}"]
+
+  auth-service:
+    build: ./back-end/auth-service
+    container_name: auth-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: ${AUTH_DB_URL:-jdbc:postgresql://postgres:5432/auth_db}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
+      JWT_SECRET: ${JWT_SECRET:?Chưa đặt JWT_SECRET trong .env (cp .env.example .env)}
+      # Tạo sẵn tài khoản mẫu (admin, manager, employee1...)
+      APP_SEED_ENABLED: ${AUTH_SEED_ENABLED:-true}
+      SPRING_JPA_SHOW_SQL: "false"
+    ports:
+      - "8081:8081" # REST
+      - "9091:9091" # gRPC
+
+  category-service:
+    build: ./back-end/category-service
+    container_name: category-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: ${CATEGORY_DB_URL:-jdbc:postgresql://postgres:5432/category_db}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "8080:8080"
+
+  front-end:
+    build:
+      context: ./front-end
+      args:
+        # Trình duyệt gọi thẳng API nên dùng localhost, không dùng tên service
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8081/api}
+        VITE_CATEGORY_API_URL: ${VITE_CATEGORY_API_URL:-http://localhost:8080/api}
+    container_name: front-end
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+      - category-service
+    # Cổng 3000 nằm trong danh sách CORS của category-service
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:
+  minio_data:

@@ -163,8 +163,8 @@ mật khẩu: kimanh123
 2. Sửa `.env`, thay `postgres` bằng IP Tailscale của máy chạy DB và dùng tài khoản được cấp:
 
    ```env
-   AUTH_DB_URL=jdbc:postgresql://100.x.x.x:5432/auth_db
-   CATEGORY_DB_URL=jdbc:postgresql://100.x.x.x:5432/category_db
+   AUTH_DB_URL=jdbc:postgresql://100.67.250.1:5432/auth_db
+   CATEGORY_DB_URL=jdbc:postgresql://100.67.250.1:5432/category_db
    DB_USERNAME=<tài khoản của bạn>
    DB_PASSWORD=<mật khẩu của bạn>
    ```

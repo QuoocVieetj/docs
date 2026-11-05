@@ -57,7 +57,8 @@ services:
       SPRING_DATASOURCE_URL: ${AUTH_DB_URL:-jdbc:postgresql://postgres:5432/auth_db}
       SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
-      JWT_SECRET: ${JWT_SECRET:?Chưa đặt JWT_SECRET trong .env (cp .env.example .env)}
+      # Khóa dev mặc định; deploy thật phải đặt JWT_SECRET mới trong .env (openssl rand -hex 32)
+      JWT_SECRET: ${JWT_SECRET:-change-me-dev-only-secret-at-least-32-chars}
       # Tạo sẵn tài khoản mẫu (admin, manager, employee1...)
       APP_SEED_ENABLED: ${AUTH_SEED_ENABLED:-true}
       SPRING_JPA_SHOW_SQL: "false"

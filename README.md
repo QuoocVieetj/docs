@@ -1,217 +1,234 @@
 # Document Management System
 
-Hệ thống quản lý hồ sơ, công văn theo kiến trúc microservice, gom trong một repo (monorepo).
+Hệ thống quản lý hồ sơ, công văn theo kiến trúc microservice (monorepo).
 
 ```
 docs/
 ├── back-end/
-│   ├── auth-service/        Spring Boot: đăng nhập, JWT, gRPC       (REST :8081, gRPC :9091)
-│   └── category-service/    Spring Boot: quản lý danh mục           (REST :8080)
-├── front-end/               React + Vite + TypeScript                (:3000 khi chạy Docker, :5173 khi dev)
-├── docker/postgres/init/    Script tạo database cho từng service
+│   ├── auth-service/        Đăng nhập, JWT, gRPC    (REST :8081, gRPC :9091)
+│   └── category-service/    Quản lý danh mục        (REST :8080)
+├── front-end/               React + Vite + TS        (:3000 Docker, :5173 dev)
+├── docker/postgres/init/    Script tạo database
 ├── docker-compose.yml       Chạy toàn bộ hệ thống
-├── .env.example             Mẫu cấu hình (copy thành .env)
-└── .github/                 CI (GitHub Actions) và ruleset bảo vệ nhánh main
+└── .env.example             Mẫu cấu hình (copy thành .env)
 ```
 
-| Thành phần | Công nghệ |
-|---|---|
-| Backend | Java 21, Spring Boot 4, Spring Security, JPA, Flyway |
-| Frontend | React 19, Vite, TypeScript, Tailwind CSS |
-| Database | PostgreSQL 16 (mỗi service một database: `auth_db`, `category_db`) |
-| Lưu tệp đính kèm | MinIO (tương thích S3), bucket `attachments` |
+**Stack:** Java 21, Spring Boot 4, JPA, Flyway · React 19, Vite, TypeScript · PostgreSQL 16 · MinIO (bucket `attachments`)
 
-## Yêu cầu
+## Chạy dự án
 
-- **Docker Desktop**: bắt buộc.
-- Chỉ khi chạy từng service bằng IDE (cách 2): **Java 21** và **Node.js 22**.
-
-## Cách 1: Chạy toàn bộ bằng Docker Compose
-
-Cách nhanh nhất, không cần cài Java hay Node.
+**Cách 1: toàn bộ bằng Docker**
 
 ```bash
-git clone https://github.com/ZhugeB1ao/docs.git
-cd docs
 cp .env.example .env
 docker compose up -d --build
+docker compose ps          # docs-minio-init "Exited (0)" là bình thường
 ```
 
-Lần đầu mất vài phút để tải image và build. Kiểm tra trạng thái:
+**Cách 2: chạy service bằng IDE** (Docker chỉ chạy hạ tầng, cần Java 21, Node 22)
 
 ```bash
-docker compose ps
+docker compose up -d postgres minio minio-init
+
+cd back-end/auth-service
+JWT_SECRET=change-me-dev-only-secret-at-least-32-chars APP_SEED_ENABLED=true ./mvnw spring-boot:run
+
+cd back-end/category-service && ./mvnw spring-boot:run
+
+cd front-end && cp .env.example .env && npm ci && npm run dev
 ```
 
-Mọi container ở trạng thái `Up` là được. Riêng `docs-minio-init` chạy xong sẽ `Exited (0)`, đó là bình thường.
+Đang chạy Cách 1 thì tắt container trước: `docker compose stop auth-service category-service front-end`.
 
 | Thành phần | Địa chỉ |
 |---|---|
 | Front-end | http://localhost:3000 |
 | auth-service | http://localhost:8081/api/auth |
 | category-service | http://localhost:8080/api/categories |
-| Health check auth-service | http://localhost:8081/actuator/health |
-| MinIO (trang quản trị) | http://localhost:9001 (`minioadmin` / `minioadmin`) |
+| MinIO console | http://localhost:9001 (`minioadmin` / `minioadmin`) |
 | PostgreSQL | `localhost:5432` (`postgres` / `postgres`) |
 
-### Tài khoản mẫu
+Tài khoản mẫu: `admin` / `Admin@123`, `manager` / `Manager@123`, `employee1` / `Employee@123`.
 
-auth-service tự tạo sẵn các tài khoản sau khi `AUTH_SEED_ENABLED=true` (mặc định trong `.env.example`):
+## Database
 
-| Username | Mật khẩu | Vai trò |
-|---|---|---|
-| `admin` | `Admin@123` | ADMIN |
-| `manager` | `Manager@123` | MANAGER |
-| `employee1` | `Employee@123` | EMPLOYEE |
-| `employee2` | `Employee@123` | EMPLOYEE |
-| `demo_hsu` | `Password@123` | EMPLOYEE |
+| Việc | Ở đâu |
+|---|---|
+| Tạo database | [docker/postgres/init/01-create-databases.sql](docker/postgres/init/01-create-databases.sql) (chỉ chạy khi volume trống) |
+| Tạo, sửa bảng | `back-end/<service>/src/main/resources/db/migration/` (Flyway) |
+| Kết nối | `application.properties` + biến môi trường trong `docker-compose.yml`, `.env` |
 
-Thử đăng nhập:
+- Mỗi service một database, **không query sang database của service khác**. Cần dữ liệu thì gọi API hoặc gRPC.
+- Service không tự tạo database, phải tạo trước.
 
-```bash
-curl -X POST http://localhost:8081/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"Admin@123"}'
-```
-
-### Database và migration
-
-- Lần đầu khởi động, Postgres tạo `category_db` (qua `POSTGRES_DB`) và `auth_db` (qua [docker/postgres/init/01-create-databases.sql](docker/postgres/init/01-create-databases.sql)).
-- Mỗi service tự chạy **Flyway migration** khi khởi động để tạo hoặc cập nhật bảng. File migration nằm ở `src/main/resources/db/migration/` của từng service.
-- Dữ liệu lưu trong Docker volume nên không mất khi tắt container.
-
-## Cách 2: Chạy từng service bằng IDE (khi dev)
-
-Dùng khi cần debug hoặc sửa code thường xuyên. Docker chỉ chạy hạ tầng (Postgres, MinIO), còn code chạy trực tiếp trên máy.
-
-**1. Bật hạ tầng:**
+### Kết nối và truy vấn
 
 ```bash
-docker compose up -d postgres minio minio-init
+# Postgres local
+docker exec -it docs-postgres psql -U postgres -d auth_db
 ```
 
-**2. Chạy auth-service** (cổng 8081). Service này bắt buộc phải có `JWT_SECRET`:
+Postgres dùng chung: xem [Tạo database và bảng trên DB dùng chung](#tạo-database-và-bảng-trên-db-dùng-chung-dev).
+
+DBeaver / IntelliJ: `localhost:5432`, `postgres` / `postgres`, database `auth_db` hoặc `category_db`.
+
+```sql
+\l   \c category_db   \dt   \d categories        -- DB, đổi DB, bảng, cấu trúc bảng
+SELECT * FROM flyway_schema_history;              -- migration đã chạy
+```
+
+### Tạo, sửa bảng (Flyway)
+
+Tạo file `V<số>__<mô_tả>.sql` trong `db/migration/`, rồi sửa Entity cho khớp. Flyway tự chạy khi service khởi động.
+
+```sql
+-- V2__add_description_to_categories.sql
+ALTER TABLE categories ADD COLUMN description VARCHAR(500);
+```
+
+```java
+@Column(length = 500)
+private String description;
+```
+
+- `ddl-auto=validate`: Entity không khớp bảng thì service không chạy.
+- **Không sửa migration đã merge**, tạo file `V` mới (sửa file cũ sẽ gây lỗi `checksum mismatch`).
+- **Không sửa bảng bằng tay** trên DB dùng chung.
+- Trùng số `V` với người khác thì đổi số trước khi mở PR.
+- CI không chạy migration (test dùng H2), nên phải chạy service với Postgres thật trước khi mở PR.
+
+## Thêm service mới có database
+
+Ví dụ: `document-service`, database `document_db`, cổng `8082`.
+
+**1. `docker/postgres/init/01-create-databases.sql`**
+
+```sql
+CREATE DATABASE document_db;
+```
+
+Máy đã có volume thì tạo tay: `docker exec docs-postgres psql -U postgres -c "CREATE DATABASE document_db;"`
+
+**2. `pom.xml`**: `spring-boot-starter-data-jpa`, `spring-boot-starter-flyway`, `flyway-database-postgresql`, `postgresql` (runtime). Copy từ [category-service/pom.xml](back-end/category-service/pom.xml).
+
+**3. `src/main/resources/application.properties`**
+
+```properties
+server.port=8082
+spring.datasource.url=${DB_URL:jdbc:postgresql://localhost:5432/document_db}
+spring.datasource.username=${DB_USERNAME:postgres}
+spring.datasource.password=${DB_PASSWORD:postgres}
+spring.jpa.hibernate.ddl-auto=validate
+spring.flyway.enabled=true
+```
+
+**4. `src/main/resources/db/migration/V1__create_documents_table.sql`**: tạo bảng, rồi viết Entity + Repository.
+
+**5. `docker-compose.yml`**
+
+```yaml
+  document-service:
+    build: ./back-end/document-service
+    container_name: document-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: ${DOCUMENT_DB_URL:-jdbc:postgresql://postgres:5432/document_db}
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "8082:8082"
+```
+
+**6. `.env.example`**
+
+```env
+DOCUMENT_DB_URL=jdbc:postgresql://postgres:5432/document_db
+```
+
+Host của DB theo nơi chạy:
+
+| Chạy ở | Host trong URL |
+|---|---|
+| IDE | `localhost` |
+| Docker Compose | `postgres` |
+| DB dùng chung | `100.67.250.1` |
+
+## Dùng Postgres dùng chung (Tailscale)
+
+Sửa `.env`, **mỗi service một dòng URL**:
+
+```env
+AUTH_DB_URL=jdbc:postgresql://100.67.250.1:5432/auth_db
+CATEGORY_DB_URL=jdbc:postgresql://100.67.250.1:5432/category_db
+DOCUMENT_DB_URL=jdbc:postgresql://100.67.250.1:5432/document_db   # service mới thì thêm dòng
+DB_USERNAME=<tài khoản>
+DB_PASSWORD=<mật khẩu>
+```
+
+Rồi chạy `docker compose up -d`.
+
+DB dùng chung chỉ truy cập được khi máy chủ DB đang bật Docker và Tailscale. Script `docker/postgres/init` không chạy trên DB dùng chung, nên service mới phải tạo database theo các bước dưới.
+
+### Tạo database và bảng trên DB dùng chung (dev)
+
+**1. Tạo lại container** (trên máy chủ DB, trong thư mục `postgres-shared`)
 
 ```bash
-cd back-end/auth-service
-JWT_SECRET=change-me-dev-only-secret-at-least-32-chars APP_SEED_ENABLED=true ./mvnw spring-boot:run
+docker compose up -d
+docker compose ps
 ```
 
-Chạy từ IntelliJ thì thêm 2 biến này trong *Run Configuration → Environment variables*.
+**2. Cấp quyền cho thành viên** (admin chạy một lần cho mỗi người)
 
-**3. Chạy category-service** (cổng 8080), ở một terminal khác:
+```sql
+ALTER ROLE baohuy CREATEDB;     -- cho phép tạo database
+ALTER ROLE baohuy CREATEROLE;   -- cho phép tạo và quản lý role khác
+```
+
+**3. Vào DB để tương tác**
 
 ```bash
-cd back-end/category-service
-./mvnw spring-boot:run
+psql "postgresql://<role>:<mật_khẩu>@100.67.250.1:5432/appdb"
 ```
 
-**4. Chạy front-end** (cổng 5173), ở một terminal khác:
+**4. Tạo database và cấp quyền cho cả nhóm**
 
-```bash
-cd front-end
-cp .env.example .env
-npm ci
-npm run dev
+```sql
+CREATE DATABASE ten_db_moi;
+
+-- Cho các thành viên kết nối vào database này
+GRANT CONNECT ON DATABASE ten_db_moi TO baohuy, giabao, giahuy, kimanh;
+
+-- Chuyển sang database mới (phải chuyển trước khi cấp quyền schema)
+\c ten_db_moi
+
+-- Cho các thành viên dùng và tạo bảng trong schema public
+GRANT USAGE, CREATE ON SCHEMA public TO baohuy, giabao, giahuy, kimanh;
 ```
 
-Mở http://localhost:5173. Ở chế độ dev, front-end dùng **mock API** (`VITE_ENABLE_MOCKS=true`) nên đăng nhập được mà không cần backend.
-
-Nếu đang chạy Cách 1, hãy tắt các container backend và front-end trước để tránh trùng cổng: `docker compose stop auth-service category-service front-end`.
+Sau đó thêm `<TÊN>_DB_URL=jdbc:postgresql://100.67.250.1:5432/ten_db_moi` vào `.env`. Bảng do Flyway của service tạo khi service khởi động.
 
 ## Cấu hình
 
-Mọi cấu hình đọc từ biến môi trường. Xem đầy đủ trong [.env.example](.env.example).
-
 | Biến | Dùng cho | Mặc định |
 |---|---|---|
-| `DB_USERNAME`, `DB_PASSWORD` | Tài khoản các service kết nối DB | `postgres` / `postgres` |
-| `AUTH_DB_URL` | DB của auth-service | `jdbc:postgresql://postgres:5432/auth_db` |
-| `CATEGORY_DB_URL` | DB của category-service | `jdbc:postgresql://postgres:5432/category_db` |
-| `JWT_SECRET` | Khóa ký JWT, **bắt buộc**, tối thiểu 32 ký tự | giá trị mẫu chỉ để dev |
+| `DB_USERNAME`, `DB_PASSWORD` | Tài khoản DB của các service | `postgres` / `postgres` |
+| `AUTH_DB_URL` | DB auth-service | `jdbc:postgresql://postgres:5432/auth_db` |
+| `CATEGORY_DB_URL` | DB category-service | `jdbc:postgresql://postgres:5432/category_db` |
+| `JWT_SECRET` | Khóa ký JWT của auth-service, không cần đặt khi dev (deploy thật thì đặt khóa mới) | giá trị dev trong `docker-compose.yml` |
 | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | Tài khoản MinIO | `minioadmin` / `minioadmin` |
 | `VITE_API_BASE_URL`, `VITE_CATEGORY_API_URL` | URL front-end gọi tới | `localhost:8081`, `localhost:8080` |
 
-**Không commit file `.env`** (đã có trong `.gitignore`). Các giá trị trong `.env.example` chỉ dùng cho dev. Môi trường dùng chung hoặc khi deploy phải tạo mật khẩu và khóa mới (`openssl rand -hex 32`).
-
-### Dùng Postgres dùng chung của nhóm (qua Tailscale)
-
-# tương tác database 
-1. trên máy đã có psql  và đã vào taiscale của tôi 
-2.  kiểm tra
-    tailscale ping 100.67.250.1
-    nc -zv 100.67.250.1 5432
-
-
-3. kết nối vào db
-    psql "postgresql://role:mật_khẩu@100.67.250.1:5432/appdb"
-
-# bảo huy 
-role: baohuy 
-mật khẩu: baohuy123
-# gia bảo 
-role: giabao
-mật khẩu: giabao123
-# gia huy
-role: giahuy 
-mật khẩu: giahuy123
-# kim anh  
-role: kimanh
-mật khẩu: kimanh123
-
-1. Bật Tailscale và tham gia mạng của nhóm.
-2. Sửa `.env`, thay `postgres` bằng IP Tailscale của máy chạy DB và dùng tài khoản được cấp:
-
-   ```env
-   AUTH_DB_URL=jdbc:postgresql://100.67.250.1:5432/auth_db
-   CATEGORY_DB_URL=jdbc:postgresql://100.67.250.1:5432/category_db
-   DB_USERNAME=<tài khoản của bạn>
-   DB_PASSWORD=<mật khẩu của bạn>
-   ```
-
-3. Chạy lại: `docker compose up -d`.
+Không commit `.env` và không ghi mật khẩu vào repo.
 
 ## Lệnh thường dùng
 
 ```bash
-docker compose logs -f auth-service                # Xem log một service
-docker compose up -d --build auth-service          # Build lại một service sau khi sửa code
-docker compose down                                # Tắt toàn bộ, giữ dữ liệu
-docker compose down -v                             # Tắt và XÓA toàn bộ dữ liệu (DB, MinIO)
+docker compose logs -f auth-service           # xem log
+docker compose up -d --build auth-service     # build lại sau khi sửa code
+docker compose down                           # tắt, giữ dữ liệu
+docker compose down -v                        # tắt và XÓA dữ liệu (DB, MinIO)
 ```
 
-## Kiểm tra trước khi tạo pull request
-
-CI chạy đúng các lệnh dưới đây trên mọi pull request. Pass ở máy thì CI cũng sẽ pass.
-
-```bash
-# Mỗi service backend (trong thư mục back-end/<service>)
-./mvnw checkstyle:check test package
-
-# Front-end (trong thư mục front-end)
-npm run lint && npm run format:check && npm test && npm run build
-```
-
-## Quy trình làm việc
-
-- Mỗi tính năng làm trên một branch riêng, đặt tên theo dạng `feature/{tên}`, ví dụ `feature/fe`, `feature/cate`, `feature/auth`.
-- Muốn đưa code vào `main` thì phải mở **pull request**. Nhánh `main` được bảo vệ ([.github/rulesets/protect-main.json](.github/rulesets/protect-main.json)):
-  - CI phải pass: lint, test, build cho BE và FE, build Docker image.
-  - Cần ít nhất **1 thành viên khác approve**.
-  - Không push thẳng hoặc force-push lên `main`.
-
-## Xử lý sự cố
-
-| Lỗi | Nguyên nhân và cách xử lý |
-|---|---|
-| `required variable JWT_SECRET is missing a value` | Chưa có file `.env`. Chạy `cp .env.example .env` |
-| `port is already allocated` / `address already in use` | Cổng 5432, 8080, 8081 hoặc 3000 đang bị chương trình khác dùng. Tắt chương trình đó, hoặc đổi cổng (ví dụ `POSTGRES_PORT=5433` trong `.env`) |
-| auth-service báo `database "auth_db" does not exist` | Volume Postgres được tạo từ trước khi có script init. Tạo bằng tay: `docker exec docs-postgres psql -U postgres -c "CREATE DATABASE auth_db;"` |
-| Service không kết nối được DB dùng chung | Kiểm tra Tailscale đã bật chưa và chạy `nc -vz 100.x.x.x 5432` |
-| Muốn làm lại từ đầu | `docker compose down -v`, sau đó `docker compose up -d --build` |
-
-## Hạn chế hiện tại
-
-- **Front-end chưa kết nối được với auth-service thật**: auth-service chưa bật CORS cho `localhost:3000`. Khi chạy Cách 1, đăng nhập trên giao diện web chưa hoạt động. Gọi API trực tiếp bằng curl hoặc Postman thì vẫn chạy.
-- **category-service chưa xác thực JWT thật**: service này chỉ nhận token giả như `Authorization: Bearer ADMIN` và chưa kiểm tra JWT do auth-service cấp.
-- **MinIO đã chạy nhưng chưa service nào dùng**: chức năng đính kèm tệp chưa được làm.
